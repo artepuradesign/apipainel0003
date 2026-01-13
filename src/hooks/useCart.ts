@@ -36,7 +36,7 @@ const writeCartToStorage = (items: CartItem[]) => {
 
 export const useCart = (): {
   cartItems: CartItem[];
-  addToCart: (product: Omit<CartItem, 'quantity'>) => void;
+  addToCart: (product: Omit<CartItem, 'quantity'>, quantity?: number) => void;
   removeFromCart: (productId: number) => void;
   updateQuantity: (productId: number, quantity: number) => void;
   clearCart: () => void;
@@ -60,13 +60,13 @@ export const useCart = (): {
     };
   }, []);
 
-  const addToCart = useCallback((item: Omit<CartItem, 'quantity'>) => {
+  const addToCart = useCallback((item: Omit<CartItem, 'quantity'>, quantity: number = 1) => {
     const current = readCartFromStorage();
-    const existing = current.find((i) => i.id === item.id);
+    const existing = current.find((i) => i.id === item.id && i.color === item.color && i.capacity === item.capacity);
 
     const next = existing
-      ? current.map((i) => (i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i))
-      : [...current, { ...item, quantity: 1 }];
+      ? current.map((i) => (i.id === item.id && i.color === item.color && i.capacity === item.capacity ? { ...i, quantity: i.quantity + quantity } : i))
+      : [...current, { ...item, quantity }];
 
     writeCartToStorage(next);
     setCartItems(next);

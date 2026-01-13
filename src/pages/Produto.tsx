@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Heart, Share2, ChevronLeft, ChevronRight, Check, Star, MapPin, CreditCard, ChevronRight as ArrowRight, Loader2, Minus, Plus } from "lucide-react";
+import { Heart, Share2, ChevronLeft, ChevronRight, Check, Star, MapPin, CreditCard, ChevronRight as ArrowRight, Loader2, Minus, Plus, Box, Smartphone, QrCode } from "lucide-react";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import WhatsAppButton from "@/components/WhatsAppButton";
@@ -12,6 +12,10 @@ import { useProductVariations } from "@/hooks/useProductVariations";
 import { toast } from "sonner";
 import { decodeProductHash, isProductHash } from "@/lib/productHash";
 import { generateProductSpecs } from "@/lib/iphoneSpecs";
+import BestSellers from "@/components/BestSellers";
+import Modal3DViewer from "@/components/Modal3DViewer";
+import { QRCodeSVG } from "qrcode.react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const Produto = () => {
   const { id: rawId } = useParams();
@@ -24,11 +28,27 @@ const Produto = () => {
   const [quantity, setQuantity] = useState(1);
   const { addToCart } = useCart();
   
+  // Estados para frete
+  const [isLoadingLocation, setIsLoadingLocation] = useState(false);
+  const [isCalculatingShipping, setIsCalculatingShipping] = useState(false);
+  const [shippingResult, setShippingResult] = useState<{
+    price: number;
+    days: number;
+    estimatedDate: string;
+  } | null>(null);
+  
+  // Estados para 3D e QR Code
+  const [show3DModal, setShow3DModal] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+  
   // Decodifica o hash para obter o ID real
   const id = rawId && isProductHash(rawId) ? decodeProductHash(rawId) || rawId : rawId;
   
   const { data: product, isLoading, error } = useApiProduct(id || '');
   const { data: variations } = useProductVariations(id || '');
+
+  // URL do produto para QR Code
+  const productUrl = typeof window !== 'undefined' ? window.location.href : '';
 
   // Set initial selections when variations load
   useEffect(() => {
@@ -127,8 +147,8 @@ const Produto = () => {
       price: currentPrice,
       color: selectedColor || '',
       capacity: selectedCapacity || '',
-    });
-    toast.success("Produto adicionado ao carrinho!");
+    }, quantity);
+    toast.success(`${quantity} ${quantity > 1 ? 'itens adicionados' : 'item adicionado'} ao carrinho!`);
   };
 
   const handleBuyNow = () => {
@@ -139,21 +159,80 @@ const Produto = () => {
       price: currentPrice,
       color: selectedColor || '',
       capacity: selectedCapacity || '',
-    });
-    toast.success("Produto adicionado ao carrinho!");
+    }, quantity);
+    toast.success(`${quantity} ${quantity > 1 ? 'itens adicionados' : 'item adicionado'} ao carrinho!`);
     navigate('/carrinho');
   };
 
-  const handleCalculateShipping = () => {
+  const handleCalculateShipping = async () => {
     if (cep.length < 8) {
       toast.error("Digite um CEP válido");
       return;
     }
-    toast.info("Calculando frete...");
+    
+    setIsCalculatingShipping(true);
+    setShippingResult(null);
+    
+    // Simular delay de API
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    // Verificar se é região Nordeste (CEPs 40000-000 a 65999-999)
+    const cepNumber = parseInt(cep);
+    const isNordeste = cepNumber >= 40000000 && cepNumber <= 65999999;
+    
+    const days = isNordeste ? 3 : 7;
+    const estimatedDate = new Date();
+    estimatedDate.setDate(estimatedDate.getDate() + days);
+    
+    setShippingResult({
+      price: 0, // Frete grátis
+      days,
+      estimatedDate: estimatedDate.toLocaleDateString('pt-BR', { 
+        weekday: 'long', 
+        day: 'numeric', 
+        month: 'long' 
+      })
+    });
+    
+    setIsCalculatingShipping(false);
   };
 
-  const handleUseLocation = () => {
-    toast.info("Obtendo localização...");
+  const handleUseLocation = async () => {
+    if (!navigator.geolocation) {
+      toast.error("Geolocalização não suportada pelo navegador");
+      return;
+    }
+    
+    setIsLoadingLocation(true);
+    
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const { latitude, longitude } = position.coords;
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`
+          );
+          const data = await response.json();
+          const postalCode = data.address?.postcode?.replace(/\D/g, '');
+          
+          if (postalCode && postalCode.length >= 8) {
+            setCep(postalCode.slice(0, 8));
+            toast.success("CEP detectado com sucesso!");
+          } else {
+            toast.error("Não foi possível detectar o CEP da sua localização");
+          }
+        } catch (err) {
+          toast.error("Erro ao buscar CEP da localização");
+        }
+        setIsLoadingLocation(false);
+      },
+      (error) => {
+        console.error("Geolocation error:", error);
+        toast.error("Não foi possível obter sua localização");
+        setIsLoadingLocation(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
   };
 
   const nextImage = () => {
@@ -163,6 +242,10 @@ const Produto = () => {
   const prevImage = () => {
     setCurrentImage((prev) => (prev === 0 ? product.images.length - 1 : prev - 1));
   };
+
+  // Verificar se produto tem modelo 3D (campo futuro)
+  const has3DModel = !!(product as any).modelo3dUrl;
+  const hasAR = !!(product as any).arEnabled;
 
   return (
     <div className="min-h-screen bg-background pb-24 lg:pb-0">
@@ -227,27 +310,57 @@ const Produto = () => {
               )}
             </div>
 
-            {/* Thumbnails - show up to 10 images */}
-            {product.images.length > 1 && (
-              <div className="flex gap-2 lg:gap-3 justify-start overflow-x-auto py-2 scrollbar-thin">
-                {product.images.slice(0, 10).map((image, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setCurrentImage(index)}
-                    className={`w-14 h-14 lg:w-16 lg:h-16 flex-shrink-0 border-2 rounded-lg overflow-hidden transition-colors bg-secondary/30 ${
-                      currentImage === index 
-                        ? "border-foreground" 
-                        : "border-border hover:border-muted-foreground"
-                    }`}
-                  >
-                    <img 
-                      src={image} 
-                      alt="" 
-                      className="w-full h-full object-contain p-1" 
-                    />
-                  </button>
-                ))}
-              </div>
+            {/* Thumbnails - show up to 10 images + 3D + QR */}
+            <div className="flex gap-2 lg:gap-3 justify-start overflow-x-auto py-2 scrollbar-thin">
+              {product.images.slice(0, 10).map((image, index) => (
+                <button
+                  key={index}
+                  onClick={() => setCurrentImage(index)}
+                  className={`w-14 h-14 lg:w-16 lg:h-16 flex-shrink-0 border-2 rounded-lg overflow-hidden transition-colors bg-secondary/30 ${
+                    currentImage === index 
+                      ? "border-foreground" 
+                      : "border-border hover:border-muted-foreground"
+                  }`}
+                >
+                  <img 
+                    src={image} 
+                    alt="" 
+                    className="w-full h-full object-contain p-1" 
+                  />
+                </button>
+              ))}
+              
+              {/* Botão para visualização 3D (quando disponível) */}
+              {has3DModel && (
+                <button
+                  onClick={() => setShow3DModal(true)}
+                  className="w-14 h-14 lg:w-16 lg:h-16 flex-shrink-0 border-2 border-border rounded-lg overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center hover:border-foreground transition-colors"
+                  title="Ver em 3D"
+                >
+                  <Box className="w-6 h-6 text-white" />
+                </button>
+              )}
+              
+              {/* Botão para QR Code */}
+              <button
+                onClick={() => setShowQRModal(true)}
+                className="w-14 h-14 lg:w-16 lg:h-16 flex-shrink-0 border-2 border-border rounded-lg overflow-hidden bg-secondary flex items-center justify-center hover:border-foreground transition-colors"
+                title="QR Code do produto"
+              >
+                <QrCode className="w-6 h-6 text-foreground" />
+              </button>
+            </div>
+            
+            {/* Botão AR (quando disponível) */}
+            {hasAR && (
+              <a
+                rel="ar"
+                href={(product as any).modelo3dUrl}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-foreground text-background rounded-lg hover:bg-foreground/80 transition-colors"
+              >
+                <Smartphone className="w-5 h-5" />
+                Ver em AR (Realidade Aumentada)
+              </a>
             )}
           </div>
 
@@ -335,18 +448,46 @@ const Produto = () => {
                 />
                 <Button 
                   onClick={handleCalculateShipping}
+                  disabled={isCalculatingShipping}
                   className="h-11 px-6 bg-foreground hover:bg-foreground/80 text-background rounded-lg transition-all"
                 >
-                  Calcular
+                  {isCalculatingShipping ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    "Calcular"
+                  )}
                 </Button>
               </div>
               <button 
                 onClick={handleUseLocation}
-                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                disabled={isLoadingLocation}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
               >
-                <MapPin className="w-4 h-4" />
-                <span>Use minha localização</span>
+                {isLoadingLocation ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <MapPin className="w-4 h-4" />
+                )}
+                <span>{isLoadingLocation ? "Obtendo localização..." : "Use minha localização"}</span>
               </button>
+              
+              {/* Resultado do cálculo de frete */}
+              {shippingResult && (
+                <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center gap-2 text-green-700">
+                    <Check className="w-5 h-5" />
+                    <span className="font-medium">
+                      {shippingResult.price === 0 ? "Frete Grátis!" : formatPrice(shippingResult.price)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-green-600 mt-1">
+                    Entrega estimada: <strong>{shippingResult.estimatedDate}</strong>
+                  </p>
+                  <p className="text-xs text-green-500 mt-1">
+                    ({shippingResult.days} dias úteis)
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Color Selector - only show registered colors */}
@@ -496,6 +637,9 @@ const Produto = () => {
             <p className="text-muted-foreground leading-relaxed">{product.description}</p>
           </div>
         )}
+
+        {/* Best Sellers Section */}
+        <BestSellers excludeProductId={product.id} />
       </main>
 
       {/* Fixed Bottom Bar - Mobile/Tablet */}
@@ -517,6 +661,41 @@ const Produto = () => {
           </Button>
         </div>
       </div>
+
+      {/* Modal 3D Viewer */}
+      {has3DModel && (
+        <Modal3DViewer
+          isOpen={show3DModal}
+          onClose={() => setShow3DModal(false)}
+          modelUrl={(product as any).modelo3dUrl}
+          productName={product.name}
+        />
+      )}
+
+      {/* Modal QR Code */}
+      <Dialog open={showQRModal} onOpenChange={setShowQRModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>QR Code do Produto</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-4 py-4">
+            <div className="bg-white p-4 rounded-xl">
+              <QRCodeSVG
+                value={productUrl}
+                size={200}
+                level="H"
+                includeMargin={true}
+              />
+            </div>
+            <p className="text-sm text-muted-foreground text-center">
+              Escaneie o QR Code para acessar este produto no seu celular
+            </p>
+            <p className="text-xs text-muted-foreground break-all text-center max-w-full">
+              {productUrl}
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Footer />
       <WhatsAppButton />
